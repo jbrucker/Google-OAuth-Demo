@@ -29,14 +29,25 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 
 /**
- * Console based demonstration of Google OAuth usage.
- * This code constructs the OAuth requests using Apache HttpClient,
- * so you can see what query parameters, headers, etc. are required.
+ * This code provides OAuth authorization for Google's "Installed Application" 
+ * authorization flow.  This is for a desktop app that is not able to receive
+ * a redirect from Google.
  * 
- * This code is designed for an "Installed Application" (Google's name) auth flow.
+ * To use this code, create a new instance and then...
+ * 1. call setCredentials to input
+ * your CLIENT_ID and CLIENT_SECRET.  Those credentials must be for an app
+ * you registered at Google's API Console as "Installed Application" of type "Other".
+ * 
+ * 2. call authorize(scope) when you want the user to authorize your access
+ * to a scope.(Google's name) auth flow.
  * After the user grants access to his data you have to copy/paste the auth code
  * into this app!
  * 
+ * 
+ * This code constructs the OAuth requests using Apache HttpClient,
+ * so you can see what query parameters, headers, etc. are required.
+ * 
+ *
  * To run this you need:
  * a) a Google Client ID and Client Secret
  * b) a Google API that you want to access. This is the SCOPE.
@@ -45,14 +56,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  */
 
 public class SimpleOAuth {
+	private static final int HTTP_STATUS_OK = 200;
+
 	// Log messages
-	private static final Logger logger = Logger.getLogger( "ConsoleDemo" );
+	private static final Logger logger = Logger.getLogger( "OAuthDemo" );
 	
-	private static final Scanner console = new Scanner(System.in);
-	
-	// Your Google Client ID (from Google Developer's Console)
+	// The application's Google Client ID (from Google Developer's Console)
 	private String clientId = null;
-	// Your Google Client Secret
+	// The application's Google Client Secret
 	private String clientSecret = null;
 	
 	/**
@@ -77,21 +88,23 @@ public class SimpleOAuth {
                  &client_id=yourClientId
                  &redirect_uri=(one of the URI from Google API console)
                  &scope=(name of resources you want access to, separate by space if more than one)
+	 
+	 * @param scope is the scope of Google resources you want to access. If more than one,
+	 * separate the scope URLs by space.
 	 */
-	public String authorize(String authUrl, String redirectUri, String scope) {
+	public boolean authorize( String scope ) {
 		if (clientId == null || clientSecret == null)
 			throw new RuntimeException("Must set client credentials before requesting auth token");
 		try {
-			URIBuilder uribuilder = new URIBuilder(authUrl);
+			URIBuilder uribuilder = new URIBuilder(Google.AUTH_URL);
 			URI uri = uribuilder.addParameter("response_type", "code")
 				.addParameter("client_id", clientId)
-				.addParameter("redirect_uri", redirectUri)
+				.addParameter("redirect_uri", Google.INSTALLED_APP_REDIRECT_URI)
 				.addParameter("scope", scope)
 				.build();
-			System.out.println( "Please grant access to your resources and then copy/paste the code here.");
 			
 			if ( openBrowser(uri.toString()) ) {
-				System.out.println( "Started browser for URI " + uri.toString() );
+				logger.info( "Started browser for URI " + uri.toString() );
 				// wait a moment for Desktop message to print
 				try { Thread.sleep(2000); } catch(InterruptedException ex) { /* ignore it */ }
 			}
@@ -99,37 +112,36 @@ public class SimpleOAuth {
 				System.out.println("Couldn't start browser. Please copy/paste this URL into your browser:");
 				System.out.println( uri.toString() );
 			}
-			System.out.print("Please paste the auth code here: ");
-			String authcode = console.nextLine().trim();
-			return authcode;
+			return true; // it probably succeeded :-)
 			
 		} catch( URISyntaxException usex ) {
 			System.out.println("URI Syntax error: " + usex.getMessage() );
 		} 
-		return null;
+		return false;
 	}
 	
 	/**
 	 * Exchange authentication code for an access token and refresh token.
-	 * @param accessUrl  Google's URL for getting access token
-	 * @param authCode   authorization code obtained by user (resource owner)
-	 * @param redirectUri  your redirect URI
+	 * First call authorize() and get the authCode from the user (somehow, like copy/paste
+	 * into your app window).
+	 * @param authCode   authorization code obtained by the user (resource owner).
 	 * @return  Google's response, which will be a JSON object containing access token (if successful)
+	 *         or return null if unsuccessful.
 	 */
-	public String getAccessToken(String accessUrl, String authCode, String redirectUri) {
+	public AccessToken getAccessToken(String authCode) {
 		if (clientId == null || clientSecret == null)
 			throw new RuntimeException("Must set client credentials before requesting access token");
 		try {
 			// create a POST request containing all the parameters Google wants.
 			// See Google's OAuth documentation. There are some optional params not shown here.
 			CloseableHttpClient httpclient =  HttpClients.createDefault();
-			HttpPost post = new HttpPost( accessUrl );
+			HttpPost post = new HttpPost( Google.ACCESS_URL );
 			// Google uses form-encoded parameters.
 			List<NameValuePair> formparams = new ArrayList<NameValuePair>();
 			formparams.add( new BasicNameValuePair("code", authCode) );
 			formparams.add( new BasicNameValuePair("client_id", clientId) );
 			formparams.add( new BasicNameValuePair("client_secret", clientSecret) );
-			formparams.add( new BasicNameValuePair("redirect_uri", redirectUri) );
+			formparams.add( new BasicNameValuePair("redirect_uri", Google.INSTALLED_APP_REDIRECT_URI) );
 			formparams.add( new BasicNameValuePair("grant_type", "authorization_code") );
 			post.setEntity( new UrlEncodedFormEntity(formparams) );
 			
@@ -137,13 +149,21 @@ public class SimpleOAuth {
 
 			CloseableHttpResponse response = httpclient.execute(post);
 			int status = response.getStatusLine().getStatusCode();
-			
-			logger.info("Response code from access token request: "+200 );
-			
 			HttpEntity body = response.getEntity();
 			String responseData = EntityUtils.toString(body);
-			logger.info("getAccess response: " + responseData );
-			return responseData;
+			
+			logger.info("Response code from access token request: "+status );
+			if (status != HTTP_STATUS_OK) {
+				logger.warning("Error response from access request: "+responseData);
+				return null;
+			}
+			
+			// parse response and return access token + refresh token
+			Map<String,String> map = parseJson(responseData);
+			AccessToken token = new AccessToken( map );
+			
+			return token;
+			
 			
 		}  catch (UnsupportedEncodingException e) {
 			System.out.println("Programmer error");
@@ -160,21 +180,21 @@ public class SimpleOAuth {
 	
 	/**
 	 * Parse the access response in JSON format.
-	 * @param string containing access response as a JSON object
-	 * @return Map of key-values in the access response. Return empty map if can't parse param.
+	 * @param jsonString contains key-value pairs in JSON format
+	 * @return Map of key-values in the key-value pairs in JSON string data
 	 */
-	public Map<String,String> parseAccessResponse(String accessResponse) {
+	public Map<String,String> parseJson(String jsonString) {
 		// Parse JSON object to a map of key-value pairs.
 		try {
 			ObjectMapper mapper = new ObjectMapper();
 			// define the type of object that ObjectMapper should instantiate.
 			TypeReference<Map<String,String>> typeref = new TypeReference< Map<String,String> >() {};
-			Map<String,String> accessmap =  mapper.readValue(accessResponse, typeref);
+			Map<String,String> accessmap =  mapper.readValue(jsonString, typeref);
 			return accessmap;
 			
 		} catch (IOException e) {
 			System.out.println("Couldn't parse Google access response:");
-			System.out.println(accessResponse);
+			System.out.println(jsonString);
 		}
 		return new HashMap<String,String>();
 	}

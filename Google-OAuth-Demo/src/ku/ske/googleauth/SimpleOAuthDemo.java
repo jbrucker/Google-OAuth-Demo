@@ -12,10 +12,10 @@ public class SimpleOAuthDemo {
 	/**  Your Google Client ID and Secret. 
 	 *  For a real app you would separate these from your code.
 	 */
-	static final String CLIENT_ID = "";
-	static final String CLIENT_SECRET = "";
+	static final String CLIENT_ID = "502508066147-th58js7tkabu0h9b8h38q3tk7hi9tlvj.apps.googleusercontent.com";
+	static final String CLIENT_SECRET = "k4qy81wR8KWkdA0B5DwMdJIN";
 	// The API(s) you want to access. If more than one, separate by spaces.
-	public static final String TASKS_SCOPE = "https://www.googleapis.com/auth/tasks";
+	public static final String SCOPE = "https://www.googleapis.com/auth/tasks";
 	
 	public static final Scanner console = new Scanner(System.in);
 	
@@ -24,8 +24,7 @@ public class SimpleOAuthDemo {
 	 * @param args
 	 */
 	public static void main(String[] args) {
-		// This is the redirect URI for installed applications
-		final String REDIRECT_URI =  "urn:ietf:wg:oauth:2.0:oob";
+		
 		
 		SimpleOAuth oauth = new SimpleOAuth();
 
@@ -33,19 +32,21 @@ public class SimpleOAuthDemo {
 		
 		// Request authorization token, which requires user consent
 		System.out.println("Requesting auth token from Google");
-		String authcode = oauth.authorize( Google.AUTH_URL, REDIRECT_URI, TASKS_SCOPE );
-		System.out.println("Auth code: "+authcode);
+		String authCode = null;
+		if ( oauth.authorize( SCOPE ) ) {
+			System.out.print("Please copy and paste the authorization code here: ");
+			authCode = console.nextLine().trim();
+		}
+		
 		
 		System.out.print("Press ENTER to exchange auth code for access token...");
 		console.nextLine();
 		
 		// Use the authcode to get an access token and refresh token
 		System.out.println("Exchanging auth code for access token");
-		String accessResponse = oauth.getAccessToken(Google.ACCESS_URL, authcode, REDIRECT_URI);
+		AccessToken token = oauth.getAccessToken( authCode );
 		
-		// Parse the response (JSON)
-		Map<String, String> accessmap = oauth.parseAccessResponse( accessResponse );
-		// and display what we got
-		for(String key: accessmap.keySet()) System.out.printf("%s = %s\n", key, accessmap.get(key));
+		// Use the access token to authorize an API call to a Google service
+		
 	}
 }
